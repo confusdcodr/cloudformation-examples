@@ -1,0 +1,8 @@
+{
+  "Parameters" : {
+    "PortfolioProvider" : "Dev CICD Team",
+    "PortfolioName" : "Dev CICD Service Catalog",
+    "PortfolioDescription" : "Dev Service Catalog",
+    "RepoRootURL" : "https://gowens-cicd.s3.amazonaws.com"
+  }
+}

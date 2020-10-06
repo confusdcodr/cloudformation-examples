@@ -1,0 +1,137 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: S3 Portfolio for Service Catalog.
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: Portfolio Information
+      Parameters:
+        - PortfolioName
+        - PortfolioProvider
+        - PortfolioDescription
+    - Label:
+        default: Product Settings
+      Parameters:
+        - RepoRootURL
+
+Parameters:
+  PortfolioProvider:
+    Type: String
+    Description: Provider Name
+    Default: IT Services
+
+  PortfolioName:
+    Type: String
+    Description: Portfolio Name
+    Default: Service Catalog S3 Reference Architecture
+
+  PortfolioDescription:
+    Type: String
+    Description: Portfolio Description
+    Default: Service Catalog Portfolio that contains reference architecture products
+      for Amazon Simple Storage Service.
+
+  RepoRootURL:
+    Type: String
+    Description: Root url for the repo containing the product templates.
+    Default: https://gowens-cicd.s3.amazonaws.com
+
+Resources:
+  S3Portfolio:
+    Type: AWS::ServiceCatalog::Portfolio
+    Properties:
+      ProviderName:
+        Ref: PortfolioProvider
+      Description:
+        Ref: PortfolioDescription
+      DisplayName:
+        Ref: PortfolioName
+
+  LaunchConstraintRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: S3LaunchConstraintRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - servicecatalog.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: S3SCLaunchPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: SCLaunchPolicySID
+                Effect: Allow
+                Action:
+                  - "servicecatalog:ListServiceActionsForProvisioningArtifact"
+                  - "servicecatalog:ExecuteprovisionedProductServiceAction"
+                  - "iam:ListRolePolicies"
+                  - "iam:ListPolicies"
+                  - "iam:DeleteRole"
+                  - "iam:GetRole"
+                  - "iam:PassRole"
+                  - "iam:ListRoles"
+                  - "iam:CreateRole"
+                  - "iam:DetachRolePolicy"
+                  - "iam:AttachRolePolicy"
+                  - "cloudformation:DescribeStackResource"
+                  - "cloudformation:DescribeStackResources"
+                  - "cloudformation:GetTemplate"
+                  - "cloudformation:List*"
+                  - "cloudformation:DescribeStackEvents"
+                  - "cloudformation:DescribeStacks"
+                  - "cloudformation:CreateStack"
+                  - "cloudformation:DeleteStack"
+                  - "cloudformation:DescribeStackEvents"
+                  - "cloudformation:DescribeStacks"
+                  - "cloudformation:GetTemplateSummary"
+                  - "cloudformation:SetStackPolicy"
+                  - "cloudformation:ValidateTemplate"
+                  - "cloudformation:UpdateStack"
+                Resource: '*'
+
+  # S3 Encrypted Product
+  S3EncProduct:
+    Type: AWS::ServiceCatalog::CloudFormationProduct
+    Properties:
+      Name: Amazon S3 Private Encrypted Bucket
+      Description: This product builds an Amazon AWS S3 bucket encrypted with private
+        access accessible from any source.
+      Owner:
+        Ref: PortfolioProvider
+      Distributor:
+        Ref: PortfolioProvider
+      SupportDescription: Operations Team
+      SupportEmail: support@yourcompany.com
+      AcceptLanguage: en
+      SupportUrl: http://helpdesk.yourcompany.com
+      ProvisioningArtifactParameters:
+        -
+          Description: baseline version
+          Info:
+            LoadTemplateFromURL: !Sub "${RepoRootURL}/s3.yaml"
+          Name: v1.0
+
+  AssociateS3Enc:
+    Type: AWS::ServiceCatalog::PortfolioProductAssociation
+    Properties:
+      PortfolioId: !Ref S3Portfolio
+      ProductId: !Ref S3EncProduct
+
+  S3EncLaunchContraint:
+    Type: AWS::ServiceCatalog::LaunchRoleConstraint
+    DependsOn: AssociateS3Enc
+    Properties:
+      PortfolioId: !Ref S3Portfolio
+      ProductId: !Ref S3EncProduct
+      RoleArn: !GetAtt LaunchConstraintRole.Arn
+      Description: LaunchConstraintRole

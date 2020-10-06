@@ -1,0 +1,13 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Template showing
+  how to create a privately accessible S3 bucket.'
+Resources:
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties: {}
+Outputs:
+  BucketName:
+    Value:
+      Ref: S3Bucket
+    Description: Name of Amazon S3 bucket to hold website content
