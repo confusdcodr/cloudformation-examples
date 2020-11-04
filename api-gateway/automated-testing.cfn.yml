@@ -1,0 +1,248 @@
+# (c) 2020 Amazon Web Services, Inc. All Rights Reserved. This AWS Content is subject
+# to the terms of the Basic Ordering Agreement Contract No. <contract #>/Order #026.
+AWSTemplateFormatVersion: 2010-09-09
+Description: Automated Testing API
+
+Parameters:
+  pApiToCloudwatchRoleArn:
+    Type: String
+    Description: IAM Role to give APIGW permission to write to cloudwatch logs
+  pApiToSqsRoleArn:
+    Type: String
+    Description: IAM Role to give APIGW permission to add messages to a sqs queue
+  pLambdaFunctionsBucket:
+    Type: String
+    Description: S3 bucket which is storing zips of the lambda functions
+  pGenerateFunctionKey:
+    Type: String
+    Description: Key for the generate function within the S3 Lambda function bucket
+  pGenerateExecutionRoleArn:
+    Type: String
+    Description: Lambda execution role for the Generate function	
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "API IAM Roles"
+        Parameters:
+          - pApiToCloudwatchRoleArn
+          - pApiToSqsRoleArn
+      - Label:
+          default: "Lambda Functions Bucket"
+        Parameters:
+          - pLambdaFunctionsBucket
+      - Label:
+            default: "Generate Lambda Function"
+        Parameters:
+          - pGenerateFunctionKey
+          - pGenerateExecutionRoleArn
+
+Resources:
+  #####################
+  # API GATEWAY
+  #####################  
+  # api gateway section
+  rApiGatewayAccount:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: !Ref pApiToCloudwatchRoleArn
+
+  # rest api
+  rAutomatedTestingRestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: automated-testing
+      Description: Api Gateway to test data-lake
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # /test resource
+  rTestApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref rAutomatedTestingRestApi
+      ParentId: !GetAtt rAutomatedTestingRestApi.RootResourceId
+      PathPart: test
+
+  # /test/query resource
+  rTestQueryApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref rAutomatedTestingRestApi
+      ParentId: !Ref rTestApiResource
+      PathPart: query
+
+  # /test/query get method
+  rTestQueryGetMethod:
+    Type: AWS::ApiGateway::Method
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W45
+            reason: Intentionally not turning on access logging for dummy stage with zero usage plan    
+    Properties:
+      RestApiId: !Ref rAutomatedTestingRestApi
+      ResourceId: !Ref rTestQueryApiResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.querystring.test: false
+      Integration:
+        Type: MOCK
+        PassthroughBehavior: WHEN_NO_TEMPLATES
+        RequestTemplates:
+          "application/json": !Sub |-
+            {
+              #if( $input.params('test') == "yes" )
+                "statusCode": 200
+              #else
+                "statusCode": 500
+              #end
+            }
+        IntegrationResponses:
+          - StatusCode: '200'
+            SelectionPattern: '200'
+            ResponseTemplates:
+              "application/json": |-
+                {
+                  "statusCode": 200,
+                  "message": "This will go to test Lambda"
+                }
+          - StatusCode: '500'
+            SelectionPattern: '5\d{2}'
+            ResponseTemplates:
+              "application/json": |-
+                {
+                  "statusCode": 500,
+                  "message": "The invoked method is not supported on the API resource."
+                }
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseModels:
+            {"application/json": "Empty"}
+        - StatusCode: '500'
+          ResponseModels:
+            {"application/json": "Empty"}
+
+  # /test/generate resource
+  rTestGenerateApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref rAutomatedTestingRestApi
+      ParentId: !Ref rTestApiResource
+      PathPart: generate
+
+  # /test/generate post method
+  rTestGeneratePostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref rAutomatedTestingRestApi
+      ResourceId: !Ref rTestGenerateApiResource
+      AuthorizationType: NONE
+      HttpMethod: POST
+      Integration:
+        Type: AWS
+        Credentials: !Ref pApiToSqsRoleArn
+        IntegrationHttpMethod: POST
+        IntegrationResponses:
+          - StatusCode: '200'
+        RequestParameters:
+          integration.request.header.Content-Type: "'application/x-www-form-urlencoded'"
+        RequestTemplates:
+          application/json: |-
+            Action=SendMessage&MessageBody=$util.urlEncode($input.body)
+        PassthroughBehavior: NEVER
+        Uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:sqs:path/${AWS::AccountId}/${rTestGenerateQueue.QueueName}
+      MethodResponses:
+        - ResponseModels:
+            application/json: Empty
+          StatusCode: '200'
+
+  # deploy api
+  rApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: 
+      - rTestQueryGetMethod
+      - rTestGeneratePostMethod
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W45
+            reason: Intentionally not turning on access logging for dummy stage with zero usage plan
+    Properties:
+      RestApiId: !Ref rAutomatedTestingRestApi
+      StageName: default
+    
+  # stage for api
+  rApiGatewayStage:
+    Type: AWS::ApiGateway::Stage
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W64
+            reason: Usage Plan not needed for data-lake
+    Properties:
+      RestApiId: !Ref rAutomatedTestingRestApi
+      DeploymentId: !Ref rApiDeployment
+
+  #####################
+  # SQS
+  ##################### 
+  # /test/generate sqs queue
+  rTestGenerateQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      ReceiveMessageWaitTimeSeconds: 0
+      VisibilityTimeout: 300
+
+  # /test/generate sqs queue policy
+  rTestGenerateQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action: SQS:*
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub ${AWS::AccountId}
+            Resource: !GetAtt rTestGenerateQueue.Arn
+        Version: 2012-10-17
+      Queues:
+        - !Ref rTestGenerateQueue
+
+  #####################
+  # LAMBDA
+  ##################### 
+  # /test/generate source mapping
+  rTestGenerateSourceMapping: 
+    Type: AWS::Lambda::EventSourceMapping
+    Properties: 
+      BatchSize: 1
+      EventSourceArn: !GetAtt rTestGenerateQueue.Arn
+      FunctionName: !GetAtt rGenerateLambdaFunction.Arn
+
+  # /test/generate lambda function
+  rGenerateLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.7
+      Role: !Ref pGenerateExecutionRoleArn
+      Handler: generate_data.lambda_handler
+      Timeout: 300
+      Environment:
+        Variables:
+          SQS_QUEUE_URL: !Ref rTestGenerateQueue
+      Code:
+        S3Bucket: !Ref pLambdaFunctionsBucket
+        S3Key: !Ref pGenerateFunctionKey
+
+Outputs:
+  oInvokeURL:
+    Value: !Sub https://${rAutomatedTestingRestApi}.execute-api.${AWS::Region}.amazonaws.com/test
+  oSQSQueueArn:
+    Description: ARN of SQS Queue
+    Value: !GetAtt rTestGenerateQueue.Arn
+  

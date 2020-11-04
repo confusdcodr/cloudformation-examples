@@ -1,0 +1,105 @@
+# (c) 2020 Amazon Web Services, Inc. All Rights Reserved. This AWS Content is subject
+# to the terms of the Basic Ordering Agreement Contract No. <contract #>/Order #026.
+AWSTemplateFormatVersion: 2010-09-09
+Description: IAM resources for Lateralus Data Lake Testing API
+Resources:
+  rApiToCloudwatchRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+
+  rApiToSqsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+        Version: 2012-10-17
+      Path: /
+      Policies:
+        - PolicyName: apigw-sqs-send-msg-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action: 
+                  - sqs:SendMessage
+                Effect: Allow
+                Resource: !Sub arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:*
+              - Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Effect: Allow
+                Resource: !Sub arn:${AWS::Partition}:logs:*:*:*
+
+  # generate function execution role
+  rGenerateExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: AutomatedTestingGenerateExecutionRole
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            -
+              Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: !Sub arn:${AWS::Partition}:logs:*:*:*
+            -
+              Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:ListBucket
+                - s3:PutObject
+              Resource: 
+                - !Sub arn:${AWS::Partition}:s3:::*
+            -
+              Effect: Allow
+              Action:
+                - sqs:ReceiveMessage
+                - sqs:GetMessage
+                - sqs:GetQueueAttributes
+                - sqs:DeleteMessage
+              Resource: 
+                - !Sub arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:*
+
+Outputs:
+  oApiToCloudwatchArn:
+    Description: ARN of IAM role attached to API Gateway to push to CloudWatch
+    Value: !GetAtt rApiToCloudwatchRole.Arn
+
+  oApiToSqsRole:
+    Description: ARN of IAM role attached to API Gateway to push to CloudWatch and SQS
+    Value: !GetAtt rApiToSqsRole.Arn
+
+  oGenerateExecutionRoleArn:
+    Description: ARN of IAM role attached to API Gateway to push to CloudWatch
+    Value: !GetAtt rGenerateExecutionRole.Arn
